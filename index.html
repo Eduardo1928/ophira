@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Mi Álbum de Fotos</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=Lora:ital@0;1&display=swap" rel="stylesheet"/>
+
+  <script type="module">
+    import { initializeApp }       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, query, orderBy }
+                                   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // ══════════════════════════════════════════════════
+    // 🔥 PEGA AQUÍ TUS CREDENCIALES DE FIREBASE
+    // Ve a: console.firebase.google.com
+    // → Tu proyecto → ⚙️ Configuración → Tus apps → </>
+    // ══════════════════════════════════════════════════
+    const firebaseConfig = {
+  apiKey:            "AIzaSyBMi-iiZ5jVBfN_AU7QmtITD9fOYIRnVro",
+  authDomain:        "ophira-album.firebaseapp.com",
+  projectId:         "ophira-album",
+  storageBucket:     "ophira-album.firebasestorage.app",
+  messagingSenderId: "178141785059",
+  appId:             "1:178141785059:web:b29a01239a2a57e1324ed6",
+};
+    // ══════════════════════════════════════════════════
+
+    // ☁️ CLOUDINARY — ya configurado con tu cuenta
+    const CLOUD_NAME    = "dnfup03wp";
+    const UPLOAD_PRESET = "album_fotos";
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+
+    const TAPE = ["#e8c9a0","#b5d5c5","#d4b0b0","#b0c4d8","#d8c0d0","#d4c8a0"];
+
+    function seededNum(id, mod) {
+      let h = 0;
+      for (let i = 0; i < id.length; i++) h = (Math.imul(31, h) + id.charCodeAt(i)) | 0;
+      return Math.abs(h) % mod;
+    }
+    function tilt(id) { return ((seededNum(id, 400) / 100) - 2).toFixed(2); }
+    function tape(id) { return TAPE[seededNum(id, TAPE.length)]; }
+    function today()  { return new Date().toLocaleDateString("es", { day:"2-digit", month:"short", year:"numeric" }); }
+
+    function showToast(msg, ok = true) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.style.background = ok ? "#8a9e7c" : "#c97b6e";
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 3200);
+    }
+
+    let photos  = [];
+    let aligned = false;
+
+    async function loadPhotos() {
+      document.getElementById("loading").style.display = "block";
+      document.getElementById("gallery").innerHTML = "";
+      try {
+        const q    = query(collection(db, "photos"), orderBy("createdAt","desc"));
+        const snap = await getDocs(q);
+        photos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderGallery();
+      } catch(e) {
+        showToast("Error al cargar. Revisa tus credenciales de Firebase.", false);
+      }
+      document.getElementById("loading").style.display = "none";
+    }
+
+    function renderGallery() {
+      const gallery  = document.getElementById("gallery");
+      const empty    = document.getElementById("empty");
+      const controls = document.getElementById("controls");
+      gallery.innerHTML = "";
+
+      if (photos.length === 0) {
+        empty.style.display    = "block";
+        controls.style.display = "none";
+        return;
+      }
+      empty.style.display    = "none";
+      controls.style.display = "flex";
+      document.getElementById("count").textContent =
+        `${photos.length} foto${photos.length !== 1 ? "s" : ""}`;
+
+      photos.forEach((p, i) => {
+        const t  = aligned ? 0 : tilt(p.id);
+        const tc = tape(p.id);
+        const card = document.createElement("div");
+        card.className = "card";
+        card.style.animationDelay = `${(i % 15) * 60}ms`;
+        card.innerHTML = `
+          <div class="inner" style="--t:${t}deg">
+            <svg class="tape-strip" viewBox="0 0 52 22">
+              <rect width="52" height="22" rx="3" fill="${tc}"/>
+              <line x1="0" y1="5"  x2="52" y2="5"  stroke="rgba(0,0,0,.07)" stroke-width="1"/>
+              <line x1="0" y1="17" x2="52" y2="17" stroke="rgba(0,0,0,.07)" stroke-width="1"/>
+            </svg>
+            <img src="${p.url}" alt="foto" loading="lazy" class="photo-img"/>
+            <div class="card-bottom">
+              <input class="caption" value="${p.caption || ""}" placeholder="Escribe un recuerdo..." maxlength="60"/>
+              <span class="date">${p.date || ""}</span>
+            </div>
+            <button class="del-btn" title="Eliminar">x</button>
+          </div>
+        `;
+
+        card.querySelector(".photo-img").addEventListener("click", () => openLightbox(p));
+
+        card.querySelector(".caption").addEventListener("blur", async e => {
+          const cap = e.target.value;
+          try {
+            await updateDoc(doc(db, "photos", p.id), { caption: cap });
+            photos = photos.map(x => x.id === p.id ? { ...x, caption: cap } : x);
+          } catch(_) {}
+        });
+
+        card.querySelector(".del-btn").addEventListener("click", async () => {
+          if (!confirm("Eliminar esta foto?")) return;
+          try {
+            await deleteDoc(doc(db, "photos", p.id));
+            photos = photos.filter(x => x.id !== p.id);
+            renderGallery();
+            showToast("Foto eliminada");
+          } catch(e) { showToast("Error al eliminar", false); }
+        });
+
+        gallery.appendChild(card);
+      });
+    }
+
+    function openLightbox(p) {
+      document.getElementById("lb-img").src = p.url;
+      document.getElementById("lb-cap").textContent = p.caption || "";
+      document.getElementById("lightbox").classList.add("open");
+    }
+    function closeLightbox() {
+      document.getElementById("lightbox").classList.remove("open");
+      document.getElementById("lb-img").src = "";
+    }
+    document.getElementById("lightbox").addEventListener("click", e => {
+      if (e.target === document.getElementById("lightbox")) closeLightbox();
+    });
+    document.getElementById("lb-close").addEventListener("click", closeLightbox);
+    document.addEventListener("keydown", e => { if (e.key === "Escape") closeLightbox(); });
+
+    const fileInput = document.getElementById("fileInput");
+    document.getElementById("uploadZone").addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", e => handleFiles(e.target.files));
+
+    const zone = document.getElementById("uploadZone");
+    zone.addEventListener("dragover",  e => { e.preventDefault(); zone.classList.add("drag"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("drag"));
+    zone.addEventListener("drop", e => {
+      e.preventDefault(); zone.classList.remove("drag");
+      handleFiles(e.dataTransfer.files);
+    });
+
+    async function handleFiles(files) {
+      if (!files?.length) return;
+      const fill       = document.getElementById("progressFill");
+      const progressW  = document.getElementById("progressWrap");
+      const uploadText = document.getElementById("uploadText");
+
+      progressW.style.display = "block";
+      uploadText.textContent  = "Subiendo...";
+      let done = 0;
+
+      for (const file of [...files]) {
+        if (!file.type.startsWith("image/")) continue;
+        try {
+          const formData = new FormData();
+          formData.append("file",          file);
+          formData.append("upload_preset", UPLOAD_PRESET);
+          formData.append("folder",        "album_fotos");
+
+          fill.style.width = "30%";
+          const res  = await fetch(
+            `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,
+            { method: "POST", body: formData }
+          );
+          fill.style.width = "70%";
+          const data = await res.json();
+
+          if (!data.secure_url) throw new Error("Cloudinary error");
+
+          const docRef = await addDoc(collection(db, "photos"), {
+            url:       data.secure_url,
+            public_id: data.public_id,
+            caption:   "",
+            date:      today(),
+            createdAt: new Date().toISOString(),
+          });
+
+          photos.unshift({
+            id:        docRef.id,
+            url:       data.secure_url,
+            public_id: data.public_id,
+            caption:   "",
+            date:      today(),
+          });
+
+          fill.style.width = "100%";
+          done++;
+        } catch(e) {
+          showToast("Error al subir " + file.name, false);
+        }
+        fill.style.width = "0%";
+      }
+
+      progressW.style.display = "none";
+      uploadText.textContent  = "Agregar fotos al album";
+
+      if (done > 0) {
+        renderGallery();
+        showToast(done + " foto" + (done > 1 ? "s" : "") + " agregada" + (done > 1 ? "s" : ""));
+      }
+    }
+
+    document.getElementById("btnAlign").addEventListener("click", () => {
+      aligned = !aligned;
+      document.getElementById("btnAlign").textContent = aligned ? "Inclinar" : "Alinear";
+      renderGallery();
+    });
+
+    loadPhotos();
+  </script>
+
+  <style>
+    :root {
+      --cream:#f5ede0; --warm:#e8d5bc; --tan:#c9a97a;
+      --brown:#7a5c3a; --dark:#3e2c1a; --rose:#c97b6e; --sage:#8a9e7c;
+    }
+    *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+    body { background:var(--cream); font-family:'Lora',Georgia,serif; color:var(--dark); overflow-x:hidden; }
+    header { text-align:center; padding:3.5rem 2rem 2rem; }
+    .tag { font-style:italic; color:var(--rose); font-size:.85rem; letter-spacing:.2em; text-transform:uppercase; margin-bottom:.5rem; }
+    h1 { font-family:'Playfair Display',serif; font-size:clamp(2.2rem,6vw,4rem); font-weight:700; color:var(--brown); line-height:1.15; }
+    h1 em { color:var(--rose); font-style:italic; }
+    .subtitle { margin-top:.5rem; font-size:.9rem; color:var(--tan); letter-spacing:.04em; }
+    .divider { margin:1.4rem auto 0; width:120px; height:2px; background:linear-gradient(90deg,transparent,var(--tan),transparent); }
+    .ribbon { width:100%; height:24px; background:repeating-linear-gradient(90deg,var(--warm) 0,var(--warm) 20px,var(--tan) 20px,var(--tan) 22px); opacity:.35; margin:.5rem 0; }
+    .upload-section { display:flex; flex-direction:column; align-items:center; padding:1.5rem 2rem 1rem; }
+    #uploadZone { display:flex; flex-direction:column; align-items:center; gap:.4rem; border:2.5px dashed var(--tan); border-radius:18px; padding:1.8rem 3rem; cursor:pointer; transition:all .3s; background:rgba(255,255,255,.35); max-width:480px; width:100%; }
+    #uploadZone:hover, #uploadZone.drag { border-color:var(--rose); background:rgba(255,255,255,.6); transform:translateY(-2px); }
+    .upload-icon { font-size:2rem; }
+    #uploadText { font-size:1rem; color:var(--brown); }
+    .upload-sub { font-size:.78rem; color:var(--tan); text-align:center; }
+    #progressWrap { width:100%; height:6px; background:#e8d5bc; border-radius:3px; overflow:hidden; margin-top:6px; display:none; }
+    #progressFill { height:100%; width:0%; background:var(--rose); border-radius:3px; transition:width .4s; }
+    #controls { display:none; justify-content:center; align-items:center; gap:1rem; padding:.5rem 2rem 1rem; flex-wrap:wrap; }
+    #count { font-style:italic; color:var(--tan); font-size:.9rem; }
+    .btn { font-family:'Lora',serif; font-size:.83rem; padding:.5rem 1.3rem; border-radius:30px; border:2px solid var(--tan); background:rgba(255,255,255,.5); color:var(--brown); cursor:pointer; transition:all .2s; }
+    .btn:hover { background:var(--brown); color:var(--cream); border-color:var(--brown); }
+    #loading, #empty { text-align:center; padding:3rem 2rem; color:var(--tan); display:none; }
+    .big-emoji { font-size:3rem; display:block; margin-bottom:.6rem; }
+    .empty-text { font-style:italic; font-size:1.05rem; }
+    #gallery { padding:.5rem 1.5rem 3rem; columns:3 280px; column-gap:1.3rem; max-width:1400px; margin:0 auto; }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(18px)} to{opacity:1;transform:translateY(0)} }
+    .card { break-inside:avoid; margin-bottom:1.3rem; display:inline-block; width:100%; animation:fadeIn .55s ease both; }
+    .inner { background:#fff; border-radius:3px; padding:10px 10px 40px; position:relative; transform:rotate(var(--t,0deg)); box-shadow:3px 5px 18px rgba(62,44,26,.18); transition:transform .3s ease,box-shadow .3s ease; }
+    .card:hover .inner { transform:scale(1.04) rotate(0deg) !important; box-shadow:0 22px 55px rgba(62,44,26,.28); }
+    .tape-strip { position:absolute; top:-12px; left:50%; transform:translateX(-50%); width:52px; height:22px; opacity:.6; }
+    .photo-img { width:100%; display:block; border-radius:2px; object-fit:cover; max-height:360px; cursor:zoom-in; }
+    .card-bottom { position:absolute; bottom:5px; left:10px; right:10px; display:flex; flex-direction:column; align-items:center; gap:1px; }
+    .caption { font-style:italic; font-size:.76rem; color:#a08060; width:100%; border:none; outline:none; background:transparent; text-align:center; font-family:'Lora',serif; }
+    .caption::placeholder { color:#c9b89a; }
+    .date { font-size:.65rem; color:#c9b89a; font-style:italic; }
+    .del-btn { position:absolute; top:5px; right:5px; background:var(--rose); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:11px; cursor:pointer; display:none; align-items:center; justify-content:center; }
+    .card:hover .del-btn { display:flex; }
+    #lightbox { display:none; position:fixed; inset:0; background:rgba(20,12,4,.88); z-index:9999; align-items:center; justify-content:center; flex-direction:column; cursor:zoom-out; }
+    #lightbox.open { display:flex; }
+    #lb-close { position:absolute; top:1rem; right:1.5rem; background:none; border:none; color:#fff; font-size:1.8rem; cursor:pointer; opacity:.8; }
+    #lb-img { max-width:90vw; max-height:80vh; object-fit:contain; border-radius:3px; box-shadow:0 30px 80px rgba(0,0,0,.5); cursor:default; }
+    #lb-cap { margin-top:1rem; font-style:italic; color:rgba(255,255,255,.7); font-size:.9rem; }
+    #toast { position:fixed; bottom:1.5rem; left:50%; transform:translateX(-50%) translateY(80px); color:#fff; padding:.6rem 1.5rem; border-radius:30px; font-size:.88rem; z-index:9998; font-family:'Lora',serif; box-shadow:0 4px 20px rgba(0,0,0,.2); white-space:nowrap; transition:transform .35s ease,opacity .35s ease; opacity:0; }
+    #toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
+    footer { text-align:center; padding:2rem 1rem; color:var(--tan); font-size:.78rem; border-top:1px solid var(--warm); }
+    footer span { color:var(--rose); }
+    @media(max-width:700px){ #gallery{ columns:2 160px; column-gap:.9rem; } }
+    @media(max-width:420px){ #gallery{ columns:1; } }
+  </style>
+</head>
+<body>
+
+<div id="lightbox">
+  <button id="lb-close">X</button>
+  <img id="lb-img" src="" alt=""/>
+  <p id="lb-cap"></p>
+</div>
+
+<div id="toast"></div>
+
+<header>
+  <p class="tag">Album Compartido</p>
+  <h1>Nuestro <em>Album</em></h1>
+  <p class="subtitle">Un lugar calido para cada momento</p>
+  <div class="divider"></div>
+</header>
+
+<div class="ribbon"></div>
+
+<div class="upload-section">
+  <div id="uploadZone">
+    <span class="upload-icon">📷</span>
+    <span id="uploadText">Agregar fotos al album</span>
+    <span class="upload-sub">Clic o arrastra · se guardan en la nube para todos</span>
+    <div id="progressWrap"><div id="progressFill"></div></div>
+  </div>
+  <input type="file" id="fileInput" accept="image/*" multiple style="display:none"/>
+</div>
+
+<div id="controls">
+  <span id="count"></span>
+  <button class="btn" id="btnAlign">Alinear</button>
+</div>
+
+<div id="loading"><span class="big-emoji">🌸</span><p class="empty-text">Cargando album...</p></div>
+<div id="empty"><span class="big-emoji">🌸</span><p class="empty-text">El album esta esperando sus primeros recuerdos...</p></div>
+<div id="gallery"></div>
+
+<div class="ribbon"></div>
+
+<footer>Hecho con <span>♥</span> · Fotos guardadas en Cloudinary y Firebase</footer>
+
+</body>
+</html>
